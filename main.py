@@ -11,15 +11,15 @@ logging.basicConfig(level=logging.INFO)
 app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# Conversion Settings
+# Conversion Settings (สำหรับการ scale ค่า ECU Map)
 MAP_CONVERSION_SETTINGS = {
     "fuel": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
-    "torque_limiter": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
-    "drivers_wish": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
     "fuel_quantity": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
     "injection_timing": {"data_type": "8bit", "factor": 0.235, "offset": -20.0, "x_scale": 1.0, "y_scale": 20.0},
     "boost_pressure": {"data_type": "8bit", "factor": 15.686, "offset": -1000, "x_scale": 1.0, "y_scale": 20.0},
     "rail_pressure": {"data_type": "16bit", "factor": 0.02749, "offset": 0, "endian": "<H", "x_scale": 1.0, "y_scale": 20.0},
+    "torque_limiter": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
+    "drivers_wish": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
     "turbo_duty": {"data_type": "8bit", "factor": 0.392, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
     "smoke_limiter": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
     "iat_ect_correction": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
@@ -28,15 +28,15 @@ MAP_CONVERSION_SETTINGS = {
     "dtc_off": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 1.0}
 }
 
-# Map Offsets (ปรับตำแหน่ง block สำหรับบาง map)
+# Offset สำหรับแต่ละแมพ
 MAP_OFFSETS = {
     "fuel": {"block": 0x1D8710, "x_axis": 0x1D8610, "y_axis": 0x1D8600},
-    "torque_limiter": {"block": 0x1DA000, "x_axis": 0x1D9F10, "y_axis": 0x1D9F00},
-    "drivers_wish": {"block": 0x1DB020, "x_axis": 0x1DAF10, "y_axis": 0x1DAF00},
     "fuel_quantity": {"block": 0x1DC000, "x_axis": 0x1DBF10, "y_axis": 0x1DBF00},
     "injection_timing": {"block": 0x1DD000, "x_axis": 0x1DCF10, "y_axis": 0x1DCF00},
     "boost_pressure": {"block": 0x1DE000, "x_axis": 0x1DDF10, "y_axis": 0x1DDF00},
     "rail_pressure": {"block": 0x1DF000, "x_axis": 0x1DEF10, "y_axis": 0x1DEF00},
+    "torque_limiter": {"block": 0x1DA000, "x_axis": 0x1D9F10, "y_axis": 0x1D9F00},
+    "drivers_wish": {"block": 0x1DB020, "x_axis": 0x1DAF10, "y_axis": 0x1DAF00},
     "turbo_duty": {"block": 0x1E0010, "x_axis": 0x1DFF10, "y_axis": 0x1DFF00},
     "smoke_limiter": {"block": 0x1E1000, "x_axis": 0x1E0F10, "y_axis": 0x1E0F00},
     "iat_ect_correction": {"block": 0x1E2000, "x_axis": 0x1E1F10, "y_axis": 0x1E1F00},
@@ -51,8 +51,7 @@ def parse_axis(raw_bytes, scale):
 @app.route("/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "healthy", "service": "ECU Map Analyzer"}), 200
-
-@app.route("/analyze", methods=["POST"])
+    @app.route("/analyze", methods=["POST"])
 def analyze_bin():
     if 'bin' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
@@ -65,7 +64,7 @@ def analyze_bin():
         bin_file = request.files['bin']
         content = bin_file.read()
         offsets = MAP_OFFSETS[map_type]
-        conv = MAP_CONVERSION_SETTINGS.get(map_type)
+        conv = MAP_CONVERSION_SETTINGS[map_type]
 
         data_type = conv["data_type"]
         value_size = 2 if data_type == "16bit" else 1
@@ -81,14 +80,13 @@ def analyze_bin():
         y_axis = parse_axis(content[offsets["y_axis"]:offsets["y_axis"] + 16], conv["y_scale"])
         block_raw = content[offsets["block"]:offsets["block"] + map_byte_size]
         factor = conv["factor"]
-        offset = conv["offset"]
+        offset_val = conv["offset"]
         endian = conv.get("endian", None)
 
-        # ตรวจ byte ซ้ำ
+        # ตรวจ byte ซ้ำทั้งหมด
         if all(b == block_raw[0] for b in block_raw):
             app.logger.warning(f"{map_type.upper()} map block byte ซ้ำทั้งหมด: {block_raw[0]}")
 
-        # สร้าง map 2D
         map_2d = []
         for i in range(16):
             row = []
@@ -102,11 +100,57 @@ def analyze_bin():
                 else:
                     raw = 0
 
-                value = raw * factor + offset
-
-                # ตัดค่าผิดปกติ
+                value = raw * factor + offset_val
                 if map_type in ["boost_pressure", "turbo_duty", "throttle"] and value < 0:
                     value = None
-
                 row.append(round(value, 2) if value is not None else None)
             map_2d.append(row)
+
+        return jsonify({
+            "type": map_type,
+            "display_name": get_map_display_name(map_type),
+            "offset": hex(offsets["block"]),
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+            "unit": get_map_unit(map_type),
+            "map": map_2d
+        })
+
+    except Exception as e:
+        app.logger.exception(f"Error analyzing {map_type}")
+        return jsonify({"error": str(e)}), 500
+        def get_map_display_name(map_type):
+    names = {
+        "fuel": "Limit IQ (Fuel Map)",
+        "fuel_quantity": "Injector Quantity",
+        "injection_timing": "Injector Timing",
+        "boost_pressure": "Boost Pressure",
+        "rail_pressure": "Rail Pressure (Limit CRP)",
+        "torque_limiter": "Limit Torque",
+        "drivers_wish": "Torque TPS (Driver’s Wish)",
+        "turbo_duty": "Turbo Duty Cycle",
+        "smoke_limiter": "Smoke Limiter",
+        "iat_ect_correction": "IAT & ECT Correction",
+        "egr": "EGR Target",
+        "throttle": "Throttle Valve",
+        "dtc_off": "DTC Table"
+    }
+    return names.get(map_type, map_type)
+
+def get_map_unit(map_type):
+    units = {
+        "fuel": "mg/stroke",
+        "fuel_quantity": "mg/stroke",
+        "injection_timing": "° BTDC",
+        "boost_pressure": "mbar",
+        "rail_pressure": "bar",
+        "torque_limiter": "%",
+        "drivers_wish": "%",
+        "turbo_duty": "%",
+        "smoke_limiter": "mg/stroke",
+        "iat_ect_correction": "%",
+        "egr": "%",
+        "throttle": "%",
+        "dtc_off": ""
+    }
+    return units.get(map_type, "")
