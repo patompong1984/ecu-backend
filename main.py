@@ -8,10 +8,22 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 
 MAP_OFFSETS = {
-    "fuel":     0x1D8710,
-    "ignition": 0x1F2000,
-    "boost":    0x1C4000
+    "fuel": 0x1D8710,
+    "torque_limiter": 0x1DA000,
+    "drivers_wish": 0x1DB000,
+    "fuel_quantity": 0x1DC000,
+    "injection_timing": 0x1DD000,
+    "boost_pressure": 0x1DE000,
+    "rail_pressure": 0x1DF000,
+    "turbo_duty": 0x1E0000,
+    "smoke_limiter": 0x1E1000,
+    "iat_ect_correction": 0x1E2000
+    "egr": 0x1E3000,
+    "throttle": 0x1E4000,
+    "dtc_off": 0x1F0000,
+
 }
+
 
 @app.route("/analyze", methods=["POST"])
 def analyze_bin():
