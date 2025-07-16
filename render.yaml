@@ -1,6 +1,11 @@
 services:
-  - type: web
-    name: ecu-backend
-    env: python
-    buildCommand: ""
-    startCommand: "python main.py"
+- type: web
+  name: ecu-backend
+  runtime: python
+  repo: https://github.com/patompong1984/ecu-backend
+  plan: free
+  region: oregon
+  buildCommand: pip install -r requirements.txt
+  startCommand: python main.py
+  autoDeployTrigger: commit
+version: "1"
