@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
-import os
 import struct
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -11,7 +10,6 @@ logging.basicConfig(level=logging.INFO)
 app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# การตั้งค่า scale สำหรับแต่ละ map
 MAP_CONVERSION_SETTINGS = {
     "fuel": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
     "fuel_quantity": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
@@ -28,7 +26,6 @@ MAP_CONVERSION_SETTINGS = {
     "dtc_off": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 1.0}
 }
 
-# ตำแหน่ง offset ของแต่ละ map
 MAP_OFFSETS = {
     "fuel": {"block": 0x1D8710, "x_axis": 0x1D8610, "y_axis": 0x1D8600},
     "fuel_quantity": {"block": 0x1DC000, "x_axis": 0x1DBF10, "y_axis": 0x1DBF00},
@@ -50,8 +47,7 @@ def parse_axis(raw_bytes, scale):
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "healthy", "service": "ECU Map Analyzer"}), 200
-    @app.route("/analyze", methods=["POST"])
+    return jsonify({"status": "healthy", "service": "ECU Map Analyzer"}), 200@app.route("/analyze", methods=["POST"])
 def analyze_bin():
     if 'bin' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
@@ -116,7 +112,10 @@ def analyze_bin():
             "unit": get_map_unit(map_type),
             "map": map_2d
         })
-def get_map_display_name(map_type):
+
+    except Exception as e:
+        app.logger.exception(f"Error analyzing {map_type}")
+        return jsonify({"error": str(e)}), 500def get_map_display_name(map_type):
     names = {
         "fuel": "Limit IQ (Fuel Map)",
         "fuel_quantity": "Injector Quantity",
@@ -151,6 +150,3 @@ def get_map_unit(map_type):
         "dtc_off": ""
     }
     return units.get(map_type, "")
-    except Exception as e:
-        app.logger.exception(f"Error analyzing {map_type}")
-        return jsonify({"error": str(e)}), 500
