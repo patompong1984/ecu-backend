@@ -3,108 +3,249 @@ from flask_cors import CORS
 import logging
 import os
 
+# สร้าง Flask App
 app = Flask(__name__)
+# เปิดใช้งาน CORS (Cross-Origin Resource Sharing) เพื่อให้ Frontend สามารถเรียกใช้ Backend ได้
 CORS(app)
+# ตั้งค่าระบบ Log ให้แสดงข้อความ INFO ขึ้นไป
 logging.basicConfig(level=logging.INFO)
 
-# กำหนด Conversion Factors และ Offsets สำหรับแต่ละ Map
-# ค่าเหล่านี้เป็นค่าประมาณการณ์จากข้อมูลทั่วไปของ ECU ที่คล้ายกัน
-# คุณอาจต้องปรับค่า 'factor' และ 'offset' ให้ตรงกับ ECU ของ Isuzu D-Max 1.9L ของคุณจริงๆ
+# --- การตั้งค่า Conversion Factors และ Offsets สำหรับแต่ละ Map ---
+# ค่าเหล่านี้ใช้ในการแปลงค่าดิบ (raw byte) ที่อ่านจากไฟล์ .bin ให้เป็นค่าจริงที่มีหน่วย
+# **สำคัญ:** ค่าเหล่านี้เป็นค่าประมาณการณ์จากข้อมูลทั่วไปของ ECU ที่คล้ายกัน
+# **คุณอาจต้องปรับค่า 'factor' และ 'offset' ให้ตรงกับ ECU ของ Isuzu D-Max 1.9L ของคุณจริงๆ
+#    โดยการวิเคราะห์จากโปรแกรมจูนกล่อง ECU มืออาชีพ (เช่น WinOLS, Dimsport Race EVO)**
 MAP_CONVERSION_SETTINGS = {
-    "fuel": {"factor": 0.01, "offset": 0}, # มิลลิกรัม/จังหวะ (ตัวอย่าง)
-    "torque_limiter": {"factor": 0.5, "offset": 0}, # นิวตันเมตร (ตัวอย่าง)
-    "drivers_wish": {"factor": 0.5, "offset": 0}, # นิวตันเมตร (ตัวอย่าง)
-    "fuel_quantity": {"factor": 0.01, "offset": 0}, # มิลลิเมตรกำลังสาม/จังหวะ (ตัวอย่าง)
-    "injection_timing": {"factor": 0.0234375, "offset": -10.0}, # องศา BTDC (ตัวอย่าง)
-    "boost_pressure": {"factor": 0.015625, "offset": 800}, # มิลลิบาร์ (ตัวอย่าง: ค่าดิบ 0 = 800mbar)
-    "rail_pressure": {"factor": 9.765625, "offset": 0}, # บาร์: ค่าที่ถูกต้องสำหรับ 8-bit rail pressure map
-    "turbo_duty": {"factor": 0.390625, "offset": 0}, # % Duty Cycle (ตัวอย่าง)
-    "smoke_limiter": {"factor": 0.01, "offset": 0}, # มิลลิกรัม/จังหวะ (ตัวอย่าง)
-    "iat_ect_correction": {"factor": 1.0, "offset": 0}, # ไม่มีหน่วย (ตัวอย่าง)
-    "egr": {"factor": 0.390625, "offset": 0}, # % เปิด (ตัวอย่าง)
-    "throttle": {"factor": 0.390625, "offset": 0}, # % เปิด (ตัวอย่าง)
-    "dtc_off": {"factor": 1.0, "offset": 0} # ไม่มีหน่วย (ตัวอย่าง)
+    # 'factor': ตัวคูณที่ใช้กับค่าดิบ (raw byte)
+    # 'offset': ค่าชดเชยที่บวกเพิ่มหลังจากคูณด้วย factor
+    
+    # Fuel Map: ปริมาณน้ำมัน (มิลลิกรัม/จังหวะ)
+    # มักใช้ factor น้อยๆ เช่น 0.01 หรือ 0.0123
+    "fuel": {"factor": 0.01, "offset": 0}, 
+    
+    # Torque Limiter: จำกัดแรงบิด (นิวตันเมตร)
+    # มักใช้ factor เช่น 0.5 หรือ 0.01
+    "torque_limiter": {"factor": 0.5, "offset": 0}, 
+    
+    # Drivers Wish: แรงบิดตามที่ผู้ขับต้องการ (นิวตันเมตร)
+    "drivers_wish": {"factor": 0.5, "offset": 0}, 
+    
+    # Fuel Quantity: ปริมาณน้ำมันจริงที่ฉีด (มิลลิเมตรกำลังสาม/จังหวะ)
+    # อาจมี factor คล้าย Fuel Map
+    "fuel_quantity": {"factor": 0.01, "offset": 0}, 
+    
+    # Injection Timing: จังหวะการฉีด (องศา BTDC)
+    # มักมี factor และ offset ที่ละเอียด เช่น 0.0234375, -10.0
+    "injection_timing": {"factor": 0.0234375, "offset": -10.0}, 
+    
+    # Boost Pressure: แรงดันอากาศจากเทอร์โบ (มิลลิบาร์)
+    # มักมี offset ที่เป็นค่า Barometric Pressure (ประมาณ 800-1000 mbar)
+    "boost_pressure": {"factor": 0.015625, "offset": 800}, 
+    
+    # Rail Pressure: แรงดันน้ำมันในราง Common Rail (บาร์)
+    # สำหรับ 8-bit (0-255) map ค่า factor 9.765625 เป็นที่นิยม
+    # 255 * 9.765625 = 2490.28 บาร์ (ค่าสูงสุดที่เหมาะสม)
+    "rail_pressure": {"factor": 9.765625, "offset": 0}, 
+    
+    # Turbo Duty: ระดับสั่งงาน Turbo Actuator (% Duty Cycle)
+    # มักใช้ factor เช่น 0.390625
+    "turbo_duty": {"factor": 0.390625, "offset": 0}, 
+    
+    # Smoke Limiter: จำกัดควันดำ (มิลลิกรัม/จังหวะ)
+    # คล้าย Fuel Map
+    "smoke_limiter": {"factor": 0.01, "offset": 0}, 
+    
+    # IAT & ECT Correction: การปรับแก้ตามอุณหภูมิไอดีและน้ำหล่อเย็น
+    # อาจมี factor 1.0 หรืออื่นๆ ขึ้นอยู่กับหน่วยการปรับแก้
+    "iat_ect_correction": {"factor": 1.0, "offset": 0}, 
+    
+    # EGR: ควบคุมระบบ EGR (% เปิด)
+    "egr": {"factor": 0.390625, "offset": 0}, 
+    
+    # Throttle: ลิ้นปีกผีเสื้อ (% เปิด)
+    "throttle": {"factor": 0.390625, "offset": 0}, 
+    
+    # DTC Off: ตารางปิดไฟแจ้งเตือน DTC (มักใช้ factor 1.0 หรือไม่มีการแปลงค่า)
+    "dtc_off": {"factor": 1.0, "offset": 0} 
 }
 
-# ตำแหน่ง offset ของ Map block + แกน X/Y (เหมือนเดิม)
+# --- ตำแหน่ง Offset ของ Map Block และ แกน X/Y ในไฟล์ .bin ---
+# ค่า Offset เหล่านี้คือตำแหน่งเริ่มต้นของข้อมูลในไฟล์ไบนารี (ระบุเป็นเลขฐาน 16)
+# **คุณต้องแน่ใจว่า Offset เหล่านี้ถูกต้องสำหรับไฟล์ .bin ที่คุณใช้อยู่**
+# **หากไฟล์ .bin มาจาก ECU ที่แตกต่างกัน Offset เหล่านี้อาจไม่ตรงกัน**
 MAP_OFFSETS = {
-    "fuel": { "block": 0x1D8710, "x_axis": 0x1D8610, "y_axis": 0x1D8600 },
-    "torque_limiter": { "block": 0x1DA000, "x_axis": 0x1D9F10, "y_axis": 0x1D9F00 },
-    "drivers_wish": { "block": 0x1DB000, "x_axis": 0x1DAF10, "y_axis": 0x1DAF00 },
-    "fuel_quantity": { "block": 0x1DC000, "x_axis": 0x1DBF10, "y_axis": 0x1DBF00 },
-    "injection_timing": { "block": 0x1DD000, "x_axis": 0x1DCF10, "y_axis": 0x1DCF00 },
-    "boost_pressure": { "block": 0x1DE000, "x_axis": 0x1DDF10, "y_axis": 0x1DDF00 },
-    "rail_pressure": { "block": 0x1DF000, "x_axis": 0x1DEF10, "y_axis": 0x1DEF00 },
-    "turbo_duty": { "block": 0x1E0000, "x_axis": 0x1DFF10, "y_axis": 0x1DFF00 },
-    "smoke_limiter": { "block": 0x1E1000, "x_axis": 0x1E0F10, "y_axis": 0x1E0F00 },
-    "iat_ect_correction": { "block": 0x1E2000, "x_axis": 0x1E1F10, "y_axis": 0x1E1F00 },
-    "egr": { "block": 0x1E3000, "x_axis": 0x1E2F10, "y_axis": 0x1E2F00 },
-    "throttle": { "block": 0x1E4000, "x_axis": 0x1E3F10, "y_axis": 0x1E3F00 },
-    "dtc_off": { "block": 0x1F0000, "x_axis": 0x1EFF10, "y_axis": 0x1EFF00 }
+    "fuel": {
+        "block": 0x1D8710, # ตำแหน่งเริ่มต้นของ Map (16x16 = 256 bytes)
+        "x_axis": 0x1D8610, # ตำแหน่งเริ่มต้นของแกน X (16 bytes)
+        "y_axis": 0x1D8600  # ตำแหน่งเริ่มต้นของแกน Y (16 bytes)
+    },
+    "torque_limiter": {
+        "block": 0x1DA000,
+        "x_axis": 0x1D9F10,
+        "y_axis": 0x1D9F00
+    },
+    "drivers_wish": {
+        "block": 0x1DB000,
+        "x_axis": 0x1DAF10,
+        "y_axis": 0x1DAF00
+    },
+    "fuel_quantity": {
+        "block": 0x1DC000,
+        "x_axis": 0x1DBF10,
+        "y_axis": 0x1DBF00
+    },
+    "injection_timing": {
+        "block": 0x1DD000,
+        "x_axis": 0x1DCF10,
+        "y_axis": 0x1DCF00
+    },
+    "boost_pressure": {
+        "block": 0x1DE000,
+        "x_axis": 0x1DDF10,
+        "y_axis": 0x1DDF00
+    },
+    "rail_pressure": {
+        "block": 0x1DF000,
+        "x_axis": 0x1DEF10,
+        "y_axis": 0x1DEF00
+    },
+    "turbo_duty": {
+        "block": 0x1E0000,
+        "x_axis": 0x1DFF10,
+        "y_axis": 0x1DFF00
+    },
+    "smoke_limiter": {
+        "block": 0x1E1000,
+        "x_axis": 0x1E0F10,
+        "y_axis": 0x1E0F00
+    },
+    "iat_ect_correction": {
+        "block": 0x1E2000,
+        "x_axis": 0x1E1F10,
+        "y_axis": 0x1E1F00
+    },
+    "egr": {
+        "block": 0x1E3000,
+        "x_axis": 0x1E2F10,
+        "y_axis": 0x1E2F00
+    },
+    "throttle": {
+        "block": 0x1E4000,
+        "x_axis": 0x1E3F10,
+        "y_axis": 0x1E3F00
+    },
+    "dtc_off": {
+        "block": 0x1F0000,
+        "x_axis": 0x1EFF10,
+        "y_axis": 0x1EFF00
+    }
 }
 
+# ฟังก์ชันสำหรับแปลงค่าแกน X หรือ Y
 def parse_axis(raw_bytes, scale):
-    # ปรับปรุง: แกน X/Y อาจมี Scale เฉพาะตัว
-    # สำหรับ Isuzu D-Max 1.9L
-    # แกน X (โหลด): ค่าดิบ * 0.01 (ถ้าเป็น % Load) หรือ 0.1
-    # แกน Y (รอบเครื่อง): ค่าดิบ * 20 (ถ้าเป็น RPM)
+    """
+    แปลงค่าดิบ (bytes) ของแกน X หรือ Y ให้เป็นค่าจริง
+    :param raw_bytes: ข้อมูล byte ดิบจากไฟล์ .bin (16 bytes)
+    :param scale: ตัวคูณสำหรับแปลงค่าดิบ
+    :return: ลิสต์ของค่าแกนที่แปลงแล้ว
+    """
+    # แกน X (โหลด) มักจะใช้ scale 1.0 (ถ้าค่าดิบคือ %) หรือ 0.1 หากเป็นค่าอื่นๆ
+    # แกน Y (รอบเครื่อง) มักจะใช้ scale 20.0 สำหรับ RPM (ค่าดิบ 1 = 20 RPM)
     return [round(b * scale) for b in raw_bytes]
 
+# Endpoint สำหรับวิเคราะห์ไฟล์ .bin
 @app.route("/analyze", methods=["POST"])
 def analyze_bin():
-    bin_file = request.files.get('bin')
-    map_type = (request.form.get('type') or 'fuel').lower()
+    """
+    รับไฟล์ .bin และประเภทของ Map จาก Frontend
+    อ่านข้อมูลจากไฟล์ตาม offset ที่กำหนด และแปลงเป็น 2D Map
+    ส่งผลลัพธ์กลับในรูปแบบ JSON
+    """
+    bin_file = request.files.get('bin') # รับไฟล์จาก Form data
+    map_type = (request.form.get('type') or 'fuel').lower() # รับประเภท Map และแปลงเป็นตัวพิมพ์เล็ก
 
+    # ตรวจสอบว่ามีไฟล์และ Map Type ที่รองรับหรือไม่
     if not bin_file or map_type not in MAP_OFFSETS:
+        app.logger.warning(f"Invalid request: bin_file={bool(bin_file)}, map_type={map_type}")
         return jsonify({ "error": "Missing file or unsupported map type" }), 400
 
-    content = bin_file.read()
-    offsets = MAP_OFFSETS[map_type]
-    
-    # ดึงค่า factor และ offset สำหรับ Map ที่เลือก
+    content = bin_file.read() # อ่านเนื้อหาทั้งหมดของไฟล์เป็น bytes
+    offsets = MAP_OFFSETS[map_type] # ดึง offset สำหรับ Map ที่เลือก
+
+    # ดึงค่า factor และ offset สำหรับ Map ที่เลือกจาก MAP_CONVERSION_SETTINGS
+    # หากไม่พบ map_type ใน settings (ซึ่งไม่ควรเกิดขึ้นถ้า MAP_OFFSETS ถูกต้อง)
+    # จะใช้ค่าเริ่มต้น factor=1.0, offset=0
     conversion_settings = MAP_CONVERSION_SETTINGS.get(map_type, {"factor": 1.0, "offset": 0})
     factor = conversion_settings["factor"]
     offset_value = conversion_settings["offset"]
 
     try:
-        # ตรวจสอบขนาดไฟล์ขั้นต่ำ
-        # หากไฟล์เป็น 2MB (2097152 bytes) ควรมีการเช็ค offset สูงสุด
-        max_required_offset = max(
+        # ตรวจสอบขนาดไฟล์ขั้นต่ำที่จำเป็นต้องมี เพื่อป้องกัน Index out of range
+        # block_end = offsets["block"] + 256
+        # x_axis_end = offsets["x_axis"] + 16
+        # y_axis_end = offsets["y_axis"] + 16
+        # max_required_offset = max(block_end, x_axis_end, y_axis_end)
+
+        # เนื่องจาก .bin file มักจะมีขนาดที่แน่นอน (เช่น 2MB) การเช็คเฉพาะ offset สูงสุด
+        # ที่จะอ่านได้ก็เพียงพอแล้ว
+        max_offset_needed = max(
             offsets["block"] + 256,
             offsets["x_axis"] + 16,
             offsets["y_axis"] + 16
         )
-        if len(content) < max_required_offset:
-            return jsonify({ "error": f"File too small for expected offset. Minimum size: {max_required_offset} bytes, but got {len(content)} bytes." }), 400
 
-        # อ่านแกน X/Y: 16 bytes ต่อแกน
-        # แกน X (โหลด) มักจะใช้ scale 1.0 หรือ 0.01 หากเป็นค่า percentage
+        if len(content) < max_offset_needed:
+            app.logger.error(f"File too small for expected offset. Map Type: {map_type}, Required: {max_offset_needed} bytes, Got: {len(content)} bytes.")
+            return jsonify({ 
+                "error": f"File too small for expected data. Minimum size for '{map_type}' map is around {max_offset_needed} bytes, but the uploaded file is only {len(content)} bytes. Please check if this is the correct .BIN file for this ECU." 
+            }), 400
+
+        # อ่านข้อมูลดิบของแกน X และ Y (แต่ละแกนมี 16 bytes)
         x_raw = content[offsets["x_axis"] : offsets["x_axis"] + 16]
-        # แกน Y (รอบเครื่อง) มักจะใช้ scale 20.0 สำหรับ RPM (ค่าดิบ 1 = 20 RPM)
         y_raw = content[offsets["y_axis"] : offsets["y_axis"] + 16]
 
-        x_axis = parse_axis(x_raw, scale=1.0) # ตรวจสอบ scale ที่ถูกต้องสำหรับแกน X (อาจจะเป็น 0.01 หรือ 0.1 สำหรับ %)
-        y_axis = parse_axis(y_raw, scale=20.0) # ค่า 20.0 สำหรับ RPM ค่อนข้างพบบ่อย
+        # แปลงค่าดิบของแกน X และ Y เป็นค่าจริง
+        # **คุณอาจต้องปรับ scale ของแกน X และ Y ให้ถูกต้องกับไฟล์ .bin ของคุณ**
+        x_axis = parse_axis(x_raw, scale=1.0)     # ตัวอย่าง: สำหรับ % Load
+        y_axis = parse_axis(y_raw, scale=20.0)    # ตัวอย่าง: สำหรับ RPM
 
-        # อ่าน map block 256 bytes → 16×16
+        # อ่านข้อมูลดิบของ Map block (16x16 = 256 bytes)
         block = content[offsets["block"] : offsets["block"] + 256]
         
-        # ใช้ factor และ offset_value ที่ดึงมาสำหรับ Map ปัจจุบัน
-        map_2d = [[round((b * factor) + offset_value, 2) for b in block[i*16:(i+1)*16]] for i in range(16)]
+        # แปลงค่าดิบใน Map block เป็นค่า 2D Map (16x16)
+        # ใช้ factor และ offset_value ที่ดึงมาสำหรับ Map ประเภทนั้นๆ
+        map_2d = []
+        for i in range(16): # 16 แถว
+            row = []
+            for j in range(16): # 16 คอลัมน์
+                # ดึงค่า byte ดิบจาก block
+                raw_byte_value = block[i * 16 + j]
+                # แปลงค่าดิบเป็นค่าจริงโดยใช้ factor และ offset ที่กำหนด
+                actual_value = (raw_byte_value * factor) + offset_value
+                # ปัดเศษให้เหลือทศนิยม 2 ตำแหน่ง
+                row.append(round(actual_value, 2))
+            map_2d.append(row)
 
+        app.logger.info(f"Successfully analyzed '{map_type}' map from offset {hex(offsets['block'])}. Map data: {map_2d[:2]}...") # Log 2 แถวแรก
+        
         return jsonify({
             "type": map_type.capitalize(),
-            "offset": hex(offsets["block"]),
+            "offset": hex(offsets["block"]), # ส่ง offset กลับไปด้วยเพื่อการอ้างอิง
             "x_axis": x_axis,
             "y_axis": y_axis,
             "map": map_2d
         })
     
     except Exception as e:
-        app.logger.error(f"Processing error: {str(e)}")
-        return jsonify({ "error": f"Processing error: {str(e)}" }), 500
+        # ดักจับข้อผิดพลาดระหว่างการประมวลผล
+        app.logger.error(f"Processing error for map type '{map_type}': {str(e)}", exc_info=True)
+        return jsonify({ "error": f"Processing error: {str(e)}. Please check the file format or selected map type." }), 500
 
+# รัน Flask App
 if __name__ == "__main__":
+    # ดึงค่า PORT จาก environment variable ถ้ามี หรือใช้ 10000 เป็นค่าเริ่มต้น
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-
+    app.logger.info(f"Starting Flask app on 0.0.0.0:{port}")
+    # รัน app ใน Production ควรใช้ WSGI server เช่น Gunicorn/Waitress
+    # สำหรับการพัฒนา สามารถใช้ app.run ได้โดยตรง
+    app.run(host="0.0.0.0", port=port, debug=False) # ตั้ง debug=False สำหรับ Production
