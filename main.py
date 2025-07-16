@@ -17,18 +17,17 @@ MAP_OFFSETS = {
     "rail_pressure": 0x1DF000,
     "turbo_duty": 0x1E0000,
     "smoke_limiter": 0x1E1000,
-    "iat_ect_correction": 0x1E2000
+    "iat_ect_correction": 0x1E2000,  # <-- comma ที่นี่
     "egr": 0x1E3000,
     "throttle": 0x1E4000,
     "dtc_off": 0x1F0000,
-
 }
 
 
 @app.route("/analyze", methods=["POST"])
 def analyze_bin():
     bin_file = request.files.get('bin')
-    map_type = request.form.get('type', 'fuel').lower()
+    map_type = (request.form.get('type') or 'fuel').lower()
 
     if not bin_file:
         app.logger.error("Missing file 'bin'")
