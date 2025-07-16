@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# Conversion Settings
+# การตั้งค่า scale สำหรับแต่ละ map
 MAP_CONVERSION_SETTINGS = {
     "fuel": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
     "fuel_quantity": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 20.0},
@@ -28,6 +28,7 @@ MAP_CONVERSION_SETTINGS = {
     "dtc_off": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 1.0}
 }
 
+# ตำแหน่ง offset ของแต่ละ map
 MAP_OFFSETS = {
     "fuel": {"block": 0x1D8710, "x_axis": 0x1D8610, "y_axis": 0x1D8600},
     "fuel_quantity": {"block": 0x1DC000, "x_axis": 0x1DBF10, "y_axis": 0x1DBF00},
@@ -102,6 +103,7 @@ def analyze_bin():
                 value = raw * factor + offset_val
                 if map_type in ["boost_pressure", "turbo_duty", "throttle"] and value < 0:
                     value = None
+
                 row.append(round(value, 2) if value is not None else None)
             map_2d.append(row)
 
