@@ -116,7 +116,41 @@ def analyze_bin():
             "unit": get_map_unit(map_type),
             "map": map_2d
         })
+def get_map_display_name(map_type):
+    names = {
+        "fuel": "Limit IQ (Fuel Map)",
+        "fuel_quantity": "Injector Quantity",
+        "injection_timing": "Injector Timing",
+        "boost_pressure": "Boost Pressure",
+        "rail_pressure": "Rail Pressure (Limit CRP)",
+        "torque_limiter": "Limit Torque",
+        "drivers_wish": "Torque TPS (Driver’s Wish)",
+        "turbo_duty": "Turbo Duty Cycle",
+        "smoke_limiter": "Smoke Limiter",
+        "iat_ect_correction": "IAT & ECT Correction",
+        "egr": "EGR Target",
+        "throttle": "Throttle Valve",
+        "dtc_off": "DTC Table"
+    }
+    return names.get(map_type, map_type)
 
+def get_map_unit(map_type):
+    units = {
+        "fuel": "mg/stroke",
+        "fuel_quantity": "mg/stroke",
+        "injection_timing": "° BTDC",
+        "boost_pressure": "mbar",
+        "rail_pressure": "bar",
+        "torque_limiter": "%",
+        "drivers_wish": "%",
+        "turbo_duty": "%",
+        "smoke_limiter": "mg/stroke",
+        "iat_ect_correction": "%",
+        "egr": "%",
+        "throttle": "%",
+        "dtc_off": ""
+    }
+    return units.get(map_type, "")
     except Exception as e:
         app.logger.exception(f"Error analyzing {map_type}")
         return jsonify({"error": str(e)}), 500
