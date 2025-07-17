@@ -3,25 +3,32 @@ from flask_cors import CORS
 import logging
 import struct
 import io
-import json # เพิ่ม import json
+import json
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 CORS(app)
-logging.basicConfig(level=logging.INFO)
-app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024 # เพิ่มขนาดไฟล์
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') # ปรับปรุง format ของ log
+app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# MAP_OFFSETS ใหม่ ที่ระบุ offset ของ block และ x_axis, y_axis ด้วย
-# และควรระบุขนาด (rows, cols) ของ map block
-# รวมถึง offset ของแกน X และ Y
+# ==============================================================================
+# MAP DEFINITIONS - Critical for accurate map analysis
+#
+# สำคัญมาก: Offsets และ Sizes เหล่านี้ต้องถูกต้องสำหรับไฟล์ .bin เฉพาะรุ่น/เวอร์ชัน
+# ที่คุณกำลังวิเคราะห์
+# หากค่าเหล่านี้ไม่ถูกต้อง กราฟจะผิดเพี้ยน หรือเกิดข้อผิดพลาด "File too small"
+# หรือ "Incomplete map data"
+#
+# คุณจำเป็นต้องหาค่าที่ถูกต้องจากแหล่งข้อมูลที่เชื่อถือได้ เช่น Damos files,
+# ซอฟต์แวร์ Tuning เฉพาะทาง (WinOLS, TunerPro RT), หรือการทำ Reverse Engineering
+# ด้วย Hex Editor (เปรียบเทียบไฟล์)
+# ==============================================================================
 MAP_OFFSETS = {
-    # ตัวอย่าง:
-    # "map_name": {"block": 0xADDRESS_OF_MAP, "x_axis": 0xADDRESS_OF_X_AXIS, "y_axis": 0xADDRESS_OF_Y_AXIS, "size": (ROWS, COLS)},
-    # หมายเหตุ: คุณจะต้องหา offset ของแกน X และ Y ของแต่ละ map ด้วยตัวเอง
-    # หาก Map นั้นมีแกน X/Y เฉพาะ (ซึ่งส่วนใหญ่จะมี)
-    # ถ้าไม่มี x_axis / y_axis key แสดงว่าใช้ default/สร้างเอง หรือเป็น 1D map
-    "limit_iq_1": {"block": 0x141918, "x_axis": 0x141886, "y_axis": 0x1418D8, "size": (26, 21)}, # ตัวอย่าง offset แกนที่อาจต้องปรับ
+    # รูปแบบ: "map_name": {"block": 0xADDRESS_OF_MAP, "x_axis": 0xADDRESS_OF_X_AXIS, "y_axis": 0xADDRESS_OF_Y_AXIS, "size": (ROWS, COLS)},
+    # ถ้า Map นั้นไม่มีแกน X/Y เฉพาะเจาะจง สามารถละเว้น "x_axis" หรือ "y_axis" ได้
+    # หรือถ้าเป็น 1D map (แถวเดียวหรือคอลัมน์เดียว) ให้ปรับ size ให้ถูกต้อง
+    "limit_iq_1": {"block": 0x141918, "x_axis": 0x141886, "y_axis": 0x1418D8, "size": (26, 21)},
     "limit_iq_2": {"block": 0x141D5C, "x_axis": 0x141CC6, "y_axis": 0x141D18, "size": (26, 21)},
     "limit_iq_3": {"block": 0x1421A0, "x_axis": 0x14210A, "y_axis": 0x14215C, "size": (26, 21)},
     "torque_tps_1": {"block": 0x143FA6, "x_axis": 0x143F10, "y_axis": 0x143F62, "size": (26, 21)},
@@ -35,7 +42,7 @@ MAP_OFFSETS = {
     "limit_baro_2": {"block": 0x16635A, "x_axis": 0x1662EE, "y_axis": 0x166324, "size": (23, 5)},
     "limit_baro_3": {"block": 0x160526, "x_axis": 0x1604BA, "y_axis": 0x1604F0, "size": (23, 5)},
     "limit_torque": {"block": 0x167002, "x_axis": 0x166F34, "y_axis": 0x166FA6, "size": (23, 10)},
-    "torque_gear": {"block": 0x1681A, "x_axis": 0x1678A, "y_axis": 0x167E0, "size": (25, 6)}, # อาจจะต้องปรับ offset แกน
+    "torque_gear": {"block": 0x1681A, "x_axis": 0x1678A, "y_axis": 0x167E0, "size": (25, 6)},
     "limit_crp": {"block": 0x1957C2, "x_axis": 0x195726, "y_axis": 0x19577A, "size": (26, 20)},
     "green_1": {"block": 0x1958C0, "x_axis": 0x195824, "y_axis": 0x195878, "size": (26, 20)},
     "green_2": {"block": 0x195915, "x_axis": 0x195879, "y_axis": 0x1958CD, "size": (26, 20)},
@@ -44,23 +51,28 @@ MAP_OFFSETS = {
     "green_5": {"block": 0x197475, "x_axis": 0x1973DE, "y_axis": 0x197430, "size": (25, 20)},
     "turbo": {"block": 0x19541C, "x_axis": 0x19535A, "y_axis": 0x1953D4, "size": (21, 14)},
     "turbo_meter": {"block": 0x195E62, "x_axis": 0x195DE8, "y_axis": 0x195E2C, "size": (21, 9)},
-    "dtc_off": {"block": 0x1D0018, "x_axis": 0x1D0000, "y_axis": 0x1D0008, "size": (5, 25)} # อาจจะต้องปรับ offset แกน
+    "dtc_off": {"block": 0x1D0018, "x_axis": 0x1D0000, "y_axis": 0x1D0008, "size": (5, 25)}
 }
 
-# MAP_CONVERSION_SETTINGS พร้อมการตั้งค่าสำหรับแต่ละ Map โดยเฉพาะ
-# หรือการกำหนด default สำหรับ map ที่ยังไม่มีข้อมูลที่ชัดเจน
+# ==============================================================================
+# MAP CONVERSION SETTINGS - Defines how raw bytes are converted to human-readable values
+#
+# ค่า factor, offset, data_type, endian, x_scale, y_scale มีผลโดยตรงต่อการแสดงผล
+# ที่ถูกต้อง หากค่าเหล่านี้ผิด กราฟจะออกมาผิดเพี้ยน หรือค่าไม่สมเหตุสมผล
+# ==============================================================================
 MAP_CONVERSION_SETTINGS = {
-    # Default settings (ควรมี)
+    # Default settings: ใช้เมื่อไม่มีการตั้งค่าเฉพาะสำหรับ Map นั้นๆ
     "default_8bit": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 1.0},
-    "default_16bit": {"data_type": "16bit", "factor": 1.0, "offset": 0, "endian": "<H", "x_scale": 1.0, "y_scale": 1.0},
-    # Specific map settings (ตัวอย่าง)
+    "default_16bit": {"data_type": "16bit", "factor": 1.0, "offset": 0, "endian": "<H", "x_scale": 1.0, "y_scale": 1.0}, # <H = Little-endian Unsigned Short
+
+    # Specific map settings: ปรับค่าเหล่านี้ตามข้อมูล Damos หรือการวิเคราะห์ของคุณ
     "limit_iq_1": {"data_type": "8bit", "factor": 0.01, "offset": 0, "x_scale": 0.235, "y_scale": 20.0},
     "limit_iq_2": {"data_type": "8bit", "factor": 0.01, "offset": 0, "x_scale": 0.235, "y_scale": 20.0},
     "limit_iq_3": {"data_type": "8bit", "factor": 0.01, "offset": 0, "x_scale": 0.235, "y_scale": 20.0},
     "torque_tps_1": {"data_type": "8bit", "factor": 0.01, "offset": 0, "x_scale": 0.235, "y_scale": 20.0},
     "torque_tps_2": {"data_type": "8bit", "factor": 0.01, "offset": 0, "x_scale": 0.235, "y_scale": 20.0},
     "torque_tps_3": {"data_type": "8bit", "factor": 0.01, "offset": 0, "x_scale": 0.235, "y_scale": 20.0},
-    "egr_target": {"data_type": "8bit", "factor": 0.392, "offset": 0, "x_scale": 100.0, "y_scale": 20.0}, # Example scales
+    "egr_target": {"data_type": "8bit", "factor": 0.392, "offset": 0, "x_scale": 100.0, "y_scale": 20.0},
     "pump_command": {"data_type": "16bit", "factor": 0.02749, "offset": 0, "endian": "<H", "x_scale": 10.0, "y_scale": 100.0},
     "injector_1": {"data_type": "16bit", "factor": 0.01, "offset": 0, "endian": "<H", "x_scale": 0.235, "y_scale": 20.0},
     "injector_2": {"data_type": "16bit", "factor": 0.01, "offset": 0, "endian": "<H", "x_scale": 0.235, "y_scale": 20.0},
@@ -83,21 +95,37 @@ MAP_CONVERSION_SETTINGS = {
 # ฟังก์ชันสำหรับแปลงค่าแกน (ใช้กับ raw bytes)
 def parse_axis_values(raw_bytes, scale, data_type="8bit", endian=None):
     values = []
-    if data_type == "8bit":
-        for b in raw_bytes:
-            values.append(round(b * scale, 2))
-    elif data_type == "16bit" and endian:
-        for i in range(0, len(raw_bytes), 2):
-            if i + 1 < len(raw_bytes):
-                try:
-                    raw = struct.unpack(endian, raw_bytes[i:i+2])[0]
-                    values.append(round(raw * scale, 2))
-                except struct.error:
-                    logging.warning(f"Struct unpack error for axis at index {i}. Bytes: {raw_bytes[i:i+2].hex()}")
-                    values.append(None)
-            else:
-                logging.warning(f"Incomplete bytes for 16bit axis at index {i}.")
+    bytes_per_axis_value = 2 if data_type == "16bit" else 1
+
+    for i in range(0, len(raw_bytes), bytes_per_axis_value):
+        if i + bytes_per_axis_value > len(raw_bytes):
+            logging.warning(f"Incomplete bytes for {data_type} axis value at index {i}. Skipping.")
+            values.append(None)
+            continue
+
+        raw_value = None
+        if data_type == "8bit":
+            raw_value = raw_bytes[i]
+        elif data_type == "16bit":
+            if endian is None:
+                logging.error(f"16bit axis requires 'endian' in conversion settings but it's missing.")
                 values.append(None)
+                continue
+            try:
+                raw_value = struct.unpack(endian, raw_bytes[i:i+bytes_per_axis_value])[0]
+            except struct.error as se:
+                logging.error(f"Struct unpack error for 16bit axis at index {i}. Bytes: {raw_bytes[i:i+bytes_per_axis_value].hex()}, Endian: {endian}. Error: {se}")
+                values.append(None)
+                continue
+        else:
+            logging.error(f"Unknown data_type '{data_type}' for axis.")
+            values.append(None)
+            continue
+        
+        if raw_value is not None:
+            values.append(round(raw_value * scale, 2))
+        else:
+            values.append(None) # ในกรณีที่ raw_value เป็น None จาก error ก่อนหน้า
     return values
 
 # Helper functions for display names and units
@@ -159,7 +187,7 @@ def get_map_unit(map_type):
     }
     return units.get(map_type, "")
 
-# Health Check Route (เพิ่มกลับมา)
+# Health Check Route
 @app.route("/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "healthy", "service": "ECU Map Analyzer"}), 200
@@ -174,7 +202,7 @@ def analyze_dynamic_map():
     map_type = request.form.get("type")
     if map_type not in MAP_OFFSETS:
         logging.error(f"Unsupported map type: {map_type}")
-        return jsonify({"error": f"Unsupported map type: {map_type}"}), 400
+        return jsonify({"error": f"Unsupported map type: {map_type}. Please check MAP_OFFSETS configuration."}), 400 # เพิ่มข้อความแนะนำ
 
     map_info = MAP_OFFSETS[map_type]
     block_offset = map_info["block"]
@@ -184,42 +212,37 @@ def analyze_dynamic_map():
 
     # ดึง conversion settings สำหรับ map_type นั้นๆ หรือใช้ default
     conv = MAP_CONVERSION_SETTINGS.get(map_type)
-    if not conv: # ถ้าไม่มีการตั้งค่าเฉพาะสำหรับ map นี้
-        # ตรวจสอบว่าควรใช้ 8bit หรือ 16bit default
-        # สำหรับตอนนี้ จะสมมติว่าถ้าไม่มีใน MAP_CONVERSION_SETTINGS จะใช้ default_8bit
-        # หรือถ้า map_type ที่รู้จักกันดีว่าเป็น 16bit (เช่น pump_command, injector, limit_crp)
-        # ให้ใช้ default_16bit
+    if not conv:
         if map_type in ["pump_command", "injector_1", "injector_2", "limit_crp"]:
              conv = MAP_CONVERSION_SETTINGS["default_16bit"]
-             logging.info(f"Using default_16bit for {map_type}")
+             logging.info(f"Using default_16bit for {map_type} (no specific settings found).")
         else:
             conv = MAP_CONVERSION_SETTINGS["default_8bit"]
-            logging.info(f"Using default_8bit for {map_type}")
+            logging.info(f"Using default_8bit for {map_type} (no specific settings found).")
     
     data_type = conv["data_type"]
     factor = conv["factor"]
     offset_val = conv["offset"]
     endian = conv.get("endian")
-    x_scale = conv.get("x_scale", 1.0) # ใช้ค่าจาก conv_settings หรือ default
-    y_scale = conv.get("y_scale", 1.0) # ใช้ค่าจาก conv_settings หรือ default
+    x_scale = conv.get("x_scale", 1.0)
+    y_scale = conv.get("y_scale", 1.0)
 
+    # กำหนด data_type และ endian สำหรับแกน X/Y โดยเฉพาะ (หากไม่ได้กำหนดใน conv_settings จะใช้ของ Map block)
+    axis_x_data_type = conv.get("x_axis_data_type", data_type)
+    axis_x_endian = conv.get("x_axis_endian", endian)
+    axis_y_data_type = conv.get("y_axis_data_type", data_type)
+    axis_y_endian = conv.get("y_axis_endian", endian)
+    axis_x_scale = conv.get("x_axis_scale", x_scale) # ใช้ scale เฉพาะแกนถ้ามี หรือใช้ x_scale ของ Map
+    axis_y_scale = conv.get("y_axis_scale", y_scale) # ใช้ scale เฉพาะแกนถ้ามี หรือใช้ y_scale ของ Map
 
     byte_per_value = 2 if data_type == "16bit" else 1
     total_map_bytes = rows * cols * byte_per_value
 
-    # คำนวณขนาดไฟล์ที่ต้องการทั้งหมด
+    # คำนวณขนาดไฟล์ที่ต้องการทั้งหมด เพื่อตรวจสอบ File too small
     required_size = block_offset + total_map_bytes
-    # ตรวจสอบขนาดของแกน X และ Y เพื่อให้แน่ใจว่าไฟล์มีขนาดเพียงพอ
     if x_axis_offset is not None:
-        # สมมติว่าแกน X เป็น 8bit หรือ 16bit เหมือน data_type ของ Map เอง
-        # หรือสามารถกำหนดแยกได้ใน MAP_CONVERSION_SETTINGS ถ้าจำเป็น
-        axis_x_data_type = conv.get("x_axis_data_type", data_type)
-        axis_x_endian = conv.get("x_axis_endian", endian)
         required_size = max(required_size, x_axis_offset + cols * (2 if axis_x_data_type == "16bit" else 1)) 
     if y_axis_offset is not None:
-        # สมมติว่าแกน Y เป็น 8bit หรือ 16bit เหมือน data_type ของ Map เอง
-        axis_y_data_type = conv.get("y_axis_data_type", data_type)
-        axis_y_endian = conv.get("y_axis_endian", endian)
         required_size = max(required_size, y_axis_offset + rows * (2 if axis_y_data_type == "16bit" else 1)) 
 
     try:
@@ -227,32 +250,36 @@ def analyze_dynamic_map():
         content = bin_file.read()
 
         if len(content) < required_size:
-            logging.error(f"File too small for map '{map_type}'. File size: {len(content)}, Required: {required_size}")
-            return jsonify({"error": "File too small for selected map"}), 400
+            logging.error(f"File too small for map '{map_type}'. File size: {len(content)} bytes, Required: {required_size} bytes. Check MAP_OFFSETS or use correct BIN file.")
+            return jsonify({"error": f"File too small for selected map. Expected at least {required_size} bytes, got {len(content)} bytes. Please check the BIN file or map offsets."}), 400
 
         # Read map block
-        raw_block = content[block_offset : block_offset + total_map_bytes]
-        if not raw_block or len(raw_block) < total_map_bytes: # ตรวจสอบขนาดของ block_raw อีกครั้ง
-            logging.error(f"Incomplete raw block for map '{map_type}'. Read {len(raw_block)} bytes, expected {total_map_bytes}.")
-            return jsonify({"error": "Incomplete map data in file"}), 400
+        # ตรวจสอบขอบเขตการอ่านก่อน
+        if block_offset + total_map_bytes > len(content):
+            logging.error(f"Map block read out of bounds for '{map_type}'. Offset: {hex(block_offset)}, Expected end: {hex(block_offset + total_map_bytes)}, File size: {hex(len(content))}.")
+            return jsonify({"error": "Map data out of file bounds. Check map block offset and size."}), 400
 
-        # ตรวจ byte ซ้ำ
-        if all(b == raw_block[0] for b in raw_block):
-            logging.warning(f"{map_type.upper()} map block byte ซ้ำทั้งหมด: {raw_block[0]} (Offset: {hex(block_offset)})")
+        raw_block = content[block_offset : block_offset + total_map_bytes]
+        if len(raw_block) != total_map_bytes: # ตรวจสอบขนาดของ block_raw อีกครั้ง
+            logging.error(f"Incomplete raw block for map '{map_type}'. Read {len(raw_block)} bytes, expected {total_map_bytes}. Check map size.")
+            return jsonify({"error": "Incomplete map data in file. Check map dimensions."}), 400
+
+        # ตรวจสอบ byte ซ้ำ (อาจบ่งบอก Map ว่างเปล่าหรือ Offset ผิด)
+        if all(b == raw_block[0] for b in raw_block) and raw_block: # เพิ่ม raw_block: เพื่อป้องกัน list ว่าง
+            logging.warning(f"{map_type.upper()} map block contains all identical bytes: {raw_block[0]} (Offset: {hex(block_offset)}). This might indicate an incorrect offset or an empty/null map.")
 
         map_data = []
         for i in range(rows):
             row = []
             for j in range(cols):
-                raw_value = 0
-                processed_value = None
+                raw_value = None
                 
                 start_idx = (i * cols + j) * byte_per_value
                 end_idx = start_idx + byte_per_value
 
                 if end_idx > len(raw_block):
-                    logging.warning(f"Map data out of bounds for {map_type} at [{i},{j}]. Expected idx {start_idx}, block length {len(raw_block)}")
-                    processed_value = None # หรืออาจจะ 0 แล้วแต่ต้องการ
+                    logging.warning(f"Map data out of bounds for {map_type} at [{i},{j}]. Block read {len(raw_block)} bytes, Expected idx {start_idx}. Filling with None.")
+                    processed_value = None
                     row.append(processed_value)
                     continue
 
@@ -266,19 +293,21 @@ def analyze_dynamic_map():
                     try:
                         raw_value = struct.unpack(endian, raw_block[start_idx:end_idx])[0]
                     except struct.error as se:
-                        logging.error(f"Struct unpack error for 16bit map '{map_type}' at index {start_idx}. Bytes: {raw_block[start_idx:end_idx].hex()}, Endian: {endian}. Error: {se}")
+                        logging.error(f"Struct unpack error for 16bit map '{map_type}' at index {start_idx}. Bytes: {raw_block[start_idx:end_idx].hex()}, Endian: {endian}. Error: {se}. Filling with None.")
                         row.append(None)
                         continue
-                else: # Unknown data_type
-                    logging.error(f"Unknown data_type '{data_type}' for map '{map_type}'.")
+                else:
+                    logging.error(f"Unknown data_type '{data_type}' for map '{map_type}'. Filling with None.")
                     row.append(None)
                     continue
 
-                processed_value = raw_value * factor + offset_val
+                processed_value = None
+                if raw_value is not None:
+                    processed_value = raw_value * factor + offset_val
                 
-                # Special handling for negative values (e.g., pressure, duty cycle should not be negative)
-                if processed_value is not None and map_type in ["turbo", "turbo_meter", "limit_baro_1", "limit_baro_2", "limit_baro_3"] and processed_value < 0:
-                    processed_value = 0
+                    # Special handling for negative values (e.g., pressure, duty cycle should not be negative)
+                    if map_type in ["turbo", "turbo_meter", "limit_baro_1", "limit_baro_2", "limit_baro_3"] and processed_value < 0:
+                        processed_value = 0 # Clamp to 0 if it's a pressure/duty cycle map
 
                 row.append(round(processed_value, 2) if processed_value is not None else None)
             map_data.append(row)
@@ -287,33 +316,31 @@ def analyze_dynamic_map():
         x_axis = []
         y_axis = []
         
-        # กำหนด data_type และ endian สำหรับแกน X/Y โดยเฉพาะ
-        # หากไม่ได้กำหนดใน conv_settings จะใช้ data_type และ endian ของ map block
-        axis_x_data_type = conv.get("x_axis_data_type", data_type)
-        axis_x_endian = conv.get("x_axis_endian", endian)
-        axis_y_data_type = conv.get("y_axis_data_type", data_type)
-        axis_y_endian = conv.get("y_axis_endian", endian)
-
-
         if x_axis_offset is not None:
             x_axis_raw_bytes_len = cols * (2 if axis_x_data_type == "16bit" else 1)
-            x_axis_raw_bytes = content[x_axis_offset : x_axis_offset + x_axis_raw_bytes_len]
-            x_axis = parse_axis_values(x_axis_raw_bytes, x_scale, axis_x_data_type, axis_x_endian)
-            if len(x_axis) > cols:
-                x_axis = x_axis[:cols]
+            # ตรวจสอบขอบเขตก่อนอ่านแกน X
+            if x_axis_offset + x_axis_raw_bytes_len > len(content):
+                logging.warning(f"X-axis read out of bounds for {map_type}. Offset: {hex(x_axis_offset)}, Expected end: {hex(x_axis_offset + x_axis_raw_bytes_len)}, File size: {hex(len(content))}. Generating generic X-axis.")
+                x_axis = [round(i * axis_x_scale, 2) for i in range(cols)]
+            else:
+                x_axis_raw_bytes = content[x_axis_offset : x_axis_offset + x_axis_raw_bytes_len]
+                x_axis = parse_axis_values(x_axis_raw_bytes, axis_x_scale, axis_x_data_type, axis_x_endian)
         else:
-            x_axis = [round(i * x_scale, 2) for i in range(cols)]
-            logging.warning(f"X-axis offset not found for {map_type}. Generating generic X-axis.")
+            x_axis = [round(i * axis_x_scale, 2) for i in range(cols)]
+            logging.info(f"X-axis offset not specified for {map_type}. Generating generic X-axis with scale {axis_x_scale}.")
 
         if y_axis_offset is not None:
             y_axis_raw_bytes_len = rows * (2 if axis_y_data_type == "16bit" else 1)
-            y_axis_raw_bytes = content[y_axis_offset : y_axis_offset + y_axis_raw_bytes_len]
-            y_axis = parse_axis_values(y_axis_raw_bytes, y_scale, axis_y_data_type, axis_y_endian)
-            if len(y_axis) > rows:
-                y_axis = y_axis[:rows]
+            # ตรวจสอบขอบเขตก่อนอ่านแกน Y
+            if y_axis_offset + y_axis_raw_bytes_len > len(content):
+                logging.warning(f"Y-axis read out of bounds for {map_type}. Offset: {hex(y_axis_offset)}, Expected end: {hex(y_axis_offset + y_axis_raw_bytes_len)}, File size: {hex(len(content))}. Generating generic Y-axis.")
+                y_axis = [round(i * axis_y_scale, 2) for i in range(rows)]
+            else:
+                y_axis_raw_bytes = content[y_axis_offset : y_axis_offset + y_axis_raw_bytes_len]
+                y_axis = parse_axis_values(y_axis_raw_bytes, axis_y_scale, axis_y_data_type, axis_y_endian)
         else:
-            y_axis = [round(i * y_scale, 2) for i in range(rows)]
-            logging.warning(f"Y-axis offset not found for {map_type}. Generating generic Y-axis.")
+            y_axis = [round(i * axis_y_scale, 2) for i in range(rows)]
+            logging.info(f"Y-axis offset not specified for {map_type}. Generating generic Y-axis with scale {axis_y_scale}.")
             
         # ตรวจสอบขนาดของแกนอีกครั้ง ถ้าไม่ตรง ให้เติมหรือตัด
         while len(x_axis) < cols:
@@ -326,12 +353,13 @@ def analyze_dynamic_map():
         while len(y_axis) > rows:
             y_axis.pop()
 
-
-        logging.info(f"Successfully analyzed '{map_type}' map ({data_type}). Dimensions: {rows}x{cols}")
+        logging.info(f"Successfully analyzed '{map_type}' map ({data_type}). Dimensions: {rows}x{cols}. Block Offset: {hex(block_offset)}")
         return jsonify({
             "type": map_type,
             "display_name": get_map_display_name(map_type),
-            "offset": hex(block_offset),
+            "offset": hex(block_offset), # ส่ง offset เป็น hex string
+            "x_axis_offset": hex(x_axis_offset) if x_axis_offset is not None else "N/A",
+            "y_axis_offset": hex(y_axis_offset) if y_axis_offset is not None else "N/A",
             "x_axis": x_axis,
             "y_axis": y_axis,
             "unit": get_map_unit(map_type),
@@ -339,8 +367,8 @@ def analyze_dynamic_map():
         })
 
     except Exception as e:
-        logging.exception(f"Error analyzing {map_type}. Details: {e}")
-        return jsonify({"error": str(e)}), 500
+        logging.exception(f"Unhandled error during analysis for {map_type}.")
+        return jsonify({"error": f"An unexpected error occurred during map analysis: {str(e)}. Please check log for details."}), 500
 
 # === NEW ENDPOINT FOR SAVING TUNED BIN ===
 @app.route("/save_tuned_bin", methods=["POST"])
@@ -359,7 +387,7 @@ def save_tuned_bin():
 
     if map_type not in MAP_OFFSETS:
         logging.error(f"Unsupported map type: '{map_type}' for saving.")
-        return jsonify({"error": f"Unsupported map type: {map_type}"}), 400
+        return jsonify({"error": f"Unsupported map type: {map_type}. Please check MAP_OFFSETS configuration."}), 400
 
     try:
         modified_map_data = json.loads(modified_map_data_str)
@@ -375,7 +403,7 @@ def save_tuned_bin():
                 conv = MAP_CONVERSION_SETTINGS["default_16bit"]
             else:
                 conv = MAP_CONVERSION_SETTINGS["default_8bit"]
-            logging.info(f"Using default conversion for '{map_type}' during save.")
+            logging.info(f"Using default conversion for '{map_type}' during save (no specific settings found).")
 
         data_type = conv["data_type"]
         factor = conv["factor"]
@@ -385,87 +413,128 @@ def save_tuned_bin():
         byte_per_value = 2 if data_type == "16bit" else 1
         total_map_bytes = rows * cols * byte_per_value
 
-        # Check if the file is large enough to contain the map
-        if len(content) < block_offset + total_map_bytes:
-            logging.error(f"Original file is too small to write map '{map_type}'. File size: {len(content)}, Required: {block_offset + total_map_bytes}")
-            return jsonify({"error": "Original file too small to write map data"}), 400
+        # Check if the file is large enough to contain the map data block
+        if block_offset + total_map_bytes > len(content):
+            logging.error(f"Original file is too small to write map '{map_type}'. File size: {len(content)} bytes, Required end offset: {block_offset + total_map_bytes} bytes.")
+            return jsonify({"error": "Original file too small to write map data. Check map block offset and size."}), 400
 
         # Convert modified map data back to raw bytes and overwrite
         for i in range(rows):
             for j in range(cols):
                 tuned_value = modified_map_data[i][j]
                 
-                if tuned_value is None: # Handle None values from frontend
-                    raw_tuned_value = 0 # Default to 0 or some other appropriate value
-                    logging.warning(f"Tuned value at [{i},{j}] for {map_type} is None. Setting to 0 for raw conversion.")
+                # Handle None values from frontend gracefully
+                if tuned_value is None:
+                    raw_tuned_value = 0 # Default to 0 if None. Consider a more appropriate default if needed for specific maps.
+                    logging.warning(f"Tuned value for {map_type} at [{i},{j}] is None. Setting to raw 0 for conversion.")
                 else:
                     # Reverse the conversion: raw = (value - offset) / factor
-                    raw_tuned_value_float = (tuned_value - offset_val) / factor
-                    
-                    # Round to nearest integer (8-bit) or correct integer (16-bit)
-                    if data_type == "8bit":
-                        raw_tuned_value = int(round(raw_tuned_value_float))
-                        # Clamp 8-bit values to 0-255
-                        raw_tuned_value = max(0, min(255, raw_tuned_value))
-                    elif data_type == "16bit":
-                        raw_tuned_value = int(round(raw_tuned_value_float))
-                        # Clamp 16-bit values to 0-65535
-                        raw_tuned_value = max(0, min(65535, raw_tuned_value))
+                    # เพิ่มการตรวจสอบ division by zero หาก factor เป็น 0
+                    if factor == 0:
+                        logging.error(f"Factor is 0 for {map_type}. Cannot reverse convert tuned value at [{i},{j}]. Setting to 0.")
+                        raw_tuned_value = 0
                     else:
-                        logging.error(f"Unknown data_type '{data_type}' during reverse conversion for {map_type}.")
-                        return jsonify({"error": "Internal server error: Unknown data type"}), 500
+                        raw_tuned_value_float = (tuned_value - offset_val) / factor
+                        
+                        if data_type == "8bit":
+                            raw_tuned_value = int(round(raw_tuned_value_float))
+                            # Clamp 8-bit values to 0-255
+                            raw_tuned_value = max(0, min(255, raw_tuned_value))
+                        elif data_type == "16bit":
+                            raw_tuned_value = int(round(raw_tuned_value_float))
+                            # Clamp 16-bit values to 0-65535 (unsigned short)
+                            raw_tuned_value = max(0, min(65535, raw_tuned_value))
+                        else:
+                            logging.error(f"Unknown data_type '{data_type}' during reverse conversion for {map_type}. Setting raw value to 0.")
+                            return jsonify({"error": "Internal server error: Unknown data type for saving"}), 500
 
 
                 start_idx = block_offset + (i * cols + j) * byte_per_value
                 end_idx = start_idx + byte_per_value
 
+                # ตรวจสอบขอบเขตการเขียนข้อมูล Map
                 if end_idx > len(content):
-                    logging.error(f"Attempted to write out of bounds for map '{map_type}' at offset {hex(start_idx)}. File length: {len(content)}")
-                    return jsonify({"error": "Map data write out of bounds"}), 500
+                    logging.error(f"Attempted to write map '{map_type}' out of file bounds at offset {hex(start_idx)}. File length: {len(content)}. Data for [{i},{j}] skipped.")
+                    # ไม่ return error ทันที ให้ process ต่อไปเผื่อมี map data ส่วนอื่นที่เขียนได้
+                    continue
 
                 if data_type == "8bit":
                     content[start_idx] = raw_tuned_value
                 elif data_type == "16bit":
                     if endian is None:
-                        logging.error(f"Endianness not specified for 16bit map '{map_type}' during save.")
-                        return jsonify({"error": "Internal server error: 16bit endianness not specified"}), 500
-                    
-                    # Pack the integer value into bytes
-                    packed_bytes = struct.pack(endian, raw_tuned_value)
-                    content[start_idx:end_idx] = packed_bytes
+                        logging.error(f"Endianness not specified for 16bit map '{map_type}' during save. Skipping write for [{i},{j}].")
+                        continue
+                    try:
+                        packed_bytes = struct.pack(endian, raw_tuned_value)
+                        content[start_idx:end_idx] = packed_bytes
+                    except struct.error as se:
+                        logging.error(f"Struct packing error for {map_type} at [{i},{j}]. Value: {raw_tuned_value}, Endian: {endian}. Error: {se}. Skipping write.")
+                        continue
                 
-        # --- !!! สำคัญมาก: จุดนี้คือที่ต้องเพิ่ม LOGIC สำหรับคำนวณ CHECKSUM !!! ---
-        # ตัวอย่าง (ต้องเปลี่ยนให้ตรงกับ ECU ของคุณ):
-        # if map_type == "some_special_map":
-        #    new_checksum_value = calculate_checksum(content) # คุณต้องเขียนฟังก์ชันนี้
-        #    checksum_offset = 0xABCDEF # ตำแหน่งของ checksum
-        #    content[checksum_offset:checksum_offset + 2] = struct.pack("<H", new_checksum_value)
-        # ---------------------------------------------------------------------
+        # ======================================================================
+        # !!! สำคัญมาก: LOGIC สำหรับการคำนวณและอัปเดต CHECKSUM !!!
+        # ======================================================================
+        # ส่วนนี้เป็นสิ่งสำคัญที่สุดที่คุณต้องเพิ่มเพื่อให้ไฟล์ที่จูนแล้ว
+        # สามารถใช้งานได้จริงกับ ECU หากไม่มีการคำนวณ Checksum ที่ถูกต้อง
+        # ECU จะถือว่าไฟล์เสียหายหรือไม่ถูกต้อง และจะไม่ยอมรับไฟล์นั้น
+        #
+        # คุณต้อง:
+        # 1. ระบุ Algorithm ของ Checksum (เช่น CRC16, CRC32, Simple Sum, etc.)
+        #    ที่ ECU รุ่นนี้ใช้.
+        # 2. ระบุตำแหน่ง (Offset) ที่ Checksum ถูกเก็บไว้ในไฟล์.
+        # 3. ระบุขอบเขต (Range) ของข้อมูลในไฟล์ .bin ที่ถูกนำไปคำนวณ Checksum.
+        #
+        # ตัวอย่าง (นี่คือ PSEUDOCODE คุณต้องเขียนฟังก์ชัน calculate_checksum() เอง):
+        #
+        # def calculate_checksum(data_bytes_segment):
+        #     # Implement the specific checksum algorithm for your ECU here.
+        #     # Example for a simple 16-bit sum:
+        #     checksum = sum(data_bytes_segment) & 0xFFFF # Modulo 65536 for 16-bit
+        #     return checksum
+        #
+        # if "your_ecu_model_identifier" in map_type: # อาจจะตรวจสอบจากชื่อ map หรือข้อมูลอื่น
+        #     checksum_start_offset = 0x000000 # ตัวอย่าง: จุดเริ่มต้นของข้อมูลที่ Checksum ครอบคลุม
+        #     checksum_end_offset = 0x1FFFFF   # ตัวอย่าง: จุดสิ้นสุดของข้อมูลที่ Checksum ครอบคลุม
+        #     checksum_location_offset = 0x1FFFFC # ตัวอย่าง: ตำแหน่งที่เก็บค่า Checksum (เช่น 2 bytes)
+        #
+        #     if checksum_start_offset < len(content) and checksum_end_offset <= len(content) and checksum_location_offset + 2 <= len(content):
+        #         data_for_checksum = content[checksum_start_offset:checksum_end_offset]
+        #         new_checksum_value = calculate_checksum(data_for_checksum)
+        #
+        #         # เขียน Checksum กลับลงไปในไฟล์ (สมมติว่าเป็น 16-bit Little-endian)
+        #         content[checksum_location_offset:checksum_location_offset + 2] = struct.pack("<H", new_checksum_value)
+        #         logging.info(f"Checksum updated to {hex(new_checksum_value)} at {hex(checksum_location_offset)} for {map_type}.")
+        #     else:
+        #         logging.warning(f"Checksum calculation skipped for {map_type} due to invalid offsets/bounds.")
+        # else:
+        #     logging.warning(f"No specific checksum logic found for {map_type}. File might be invalid for ECU if checksum is required.")
+        #
+        # ======================================================================
 
         # ส่งไฟล์ที่แก้ไขแล้วกลับไป
         modified_file_stream = io.BytesIO(content)
-        modified_file_stream.seek(0) # กลับไปที่จุดเริ่มต้นของ stream
+        modified_file_stream.seek(0)
 
         logging.info(f"Successfully tuned and prepared file for {map_type}.")
         return send_file(
             modified_file_stream,
-            mimetype='application/octet-stream', # ประเภทสำหรับไฟล์ไบนารี
+            mimetype='application/octet-stream',
             as_attachment=True,
-            download_name=f"{map_type}_tuned_map.bin" # ชื่อไฟล์ที่ดาวน์โหลด
+            download_name=f"{map_type}_tuned_map.bin"
         )
 
     except json.JSONDecodeError as jde:
         logging.error(f"JSON Decode Error for modified_map_data: {jde}")
-        return jsonify({"error": "Invalid modified map data format"}), 400
+        return jsonify({"error": f"Invalid modified map data format: {str(jde)}"}), 400
     except struct.error as se:
         logging.error(f"Struct packing error during save for {map_type}: {se}")
-        return jsonify({"error": "Data packing error during save"}), 500
+        return jsonify({"error": f"Data packing error during save: {str(se)}"}), 500
     except Exception as e:
         logging.exception(f"Unhandled error during save_tuned_bin for {map_type}.")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"An unexpected error occurred during saving: {str(e)}. Please check log for details."}), 500
 
-# If running locally for development
 if __name__ == '__main__':
     # สำหรับการรันบน Render/Production ไม่จำเป็นต้องใช้บรรทัดนี้ เพราะ Render จะจัดการการรันให้
     # หากรันในเครื่องเพื่อทดสอบ ให้ uncomment บรรทัดนี้
     app.run(host='0.0.0.0', port=10000, debug=True)
+
