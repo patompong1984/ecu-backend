@@ -9,7 +9,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app = Flask(__name__)
 CORS(app)
 # ปรับปรุง format ของ log เพื่อให้มี timestamp และระดับความสำคัญ
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024 # เพิ่มขนาดไฟล์
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -113,7 +113,7 @@ def parse_axis_values(raw_bytes, scale, data_type="8bit", endian=None):
             logging.error(f"Unknown data_type '{data_type}' for axis.")
             values.append(None)
             continue
-        
+
         if raw_value is not None:
             values.append(round(raw_value * scale, 2))
         else:
@@ -171,7 +171,7 @@ def analyze_dynamic_map():
     if any(val is None for val in [map_name, block_offset, rows, cols, data_type, factor, offset_val]):
         logging.error(f"Missing essential map definition fields: {map_def}")
         return jsonify({"error": "Incomplete map definition. Missing name, offset, dimensions, data type, factor, or offset."}), 400
-    
+
     if data_type == "16bit" and endian is None:
         logging.error(f"16bit map '{map_name}' requires 'endian' property in definition.")
         return jsonify({"error": f"16-bit map '{map_name}' requires 'endian' property."}), 400
@@ -183,10 +183,10 @@ def analyze_dynamic_map():
     required_size = block_offset + total_map_bytes
     if x_axis_offset is not None:
         x_axis_bytes_len = cols * (2 if x_axis_data_type == "16bit" else 1)
-        required_size = max(required_size, x_axis_offset + x_axis_bytes_len) 
+        required_size = max(required_size, x_axis_offset + x_axis_bytes_len)
     if y_axis_offset is not None:
         y_axis_bytes_len = rows * (2 if y_axis_data_type == "16bit" else 1)
-        required_size = max(required_size, y_axis_offset + y_axis_bytes_len) 
+        required_size = max(required_size, y_axis_offset + y_axis_bytes_len)
 
     try:
         bin_file = request.files["bin"]
@@ -215,7 +215,7 @@ def analyze_dynamic_map():
             row = []
             for j in range(cols):
                 raw_value = None
-                
+
                 start_idx = (i * cols + j) * byte_per_value
                 end_idx = start_idx + byte_per_value
 
@@ -250,15 +250,15 @@ def analyze_dynamic_map():
                     # You might want to make this configurable in the frontend map definition if needed.
                     # For now, keeping a general clamp for pressure-like values.
                     if unit in ["bar", "mbar", "% duty"] and processed_value < 0:
-                         processed_value = 0 
-                
+                         processed_value = 0
+
                 row.append(round(processed_value, 2) if processed_value is not None else None)
             map_data.append(row)
 
         # Read and parse X and Y axes
         x_axis = []
         y_axis = []
-        
+
         if x_axis_offset is not None:
             x_axis_raw_bytes_len = cols * (2 if x_axis_data_type == "16bit" else 1)
             if x_axis_offset < 0 or x_axis_offset + x_axis_raw_bytes_len > len(content):
@@ -282,7 +282,7 @@ def analyze_dynamic_map():
         else:
             y_axis = [round(i * y_scale, 2) for i in range(rows)]
             logging.info(f"Y-axis offset not specified for {map_name}. Generating generic Y-axis with scale {y_scale}.")
-            
+
         # Ensure axis lengths match map dimensions
         while len(x_axis) < cols:
             x_axis.append(None)
@@ -365,7 +365,7 @@ def save_tuned_bin():
     for i in range(rows):
         for j in range(cols):
             tuned_value = modified_map_data[i][j]
-            
+
             # Handle None values from frontend gracefully
             if tuned_value is None:
                 raw_tuned_value = 0 # Default to 0 if None. Consider a more appropriate default if needed for specific maps.
@@ -377,7 +377,7 @@ def save_tuned_bin():
                     raw_tuned_value = 0
                 else:
                     raw_tuned_value_float = (tuned_value - offset_val) / factor
-                    
+
                     if data_type == "8bit":
                         raw_tuned_value = int(round(raw_tuned_value_float))
                         # Clamp 8-bit values to 0-255
@@ -411,7 +411,7 @@ def save_tuned_bin():
                 except struct.error as se:
                     logging.error(f"Struct packing error for {map_name} at [{i},{j}]. Value: {raw_tuned_value}, Endian: {endian}. Error: {se}. Skipping write.")
                     continue
-            
+
     # ======================================================================
     # !!! สำคัญมาก: LOGIC สำหรับการคำนวณและอัปเดต CHECKSUM !!!
     # ======================================================================
@@ -465,5 +465,39 @@ def save_tuned_bin():
         download_name=f"{map_name}_tuned_map.bin"
     )
 
+---
+
+**เพิ่ม Endpoint ใหม่นี้:**
+
+```python
+@app.route("/read_full_bin", methods=["POST"])
+def read_full_bin():
+    if 'bin' not in request.files:
+        logging.error("No file uploaded for full BIN read.")
+        return jsonify({"error": "No file uploaded"}), 400
+
+    try:
+        bin_file = request.files["bin"]
+        content = bin_file.read() # อ่านเนื้อหาทั้งหมดของไฟล์
+
+        # คุณสามารถเลือกที่จะส่งเป็นไบนารีโดยตรง หรือแปลงเป็น Hex String
+        # การส่งเป็นไบนารีโดยตรง:
+        # return send_file(
+        #     io.BytesIO(content),
+        #     mimetype='application/octet-stream',
+        #     as_attachment=False, # ไม่ส่งเป็น attachment เพื่อให้ฟรอนต์เอนด์อ่านตรงๆ
+        #     download_name="full_bin_data.bin" # ชื่อไฟล์ถ้าเบราว์เซอร์ดาวน์โหลด
+        # )
+
+        # หรือแปลงเป็น Hex String เพื่อการแสดงผลที่ง่ายขึ้นบนเว็บ (อาจมีขนาดใหญ่มาก)
+        hex_data = content.hex()
+        logging.info(f"Successfully read full BIN file. Size: {len(content)} bytes.")
+        return jsonify({"data": hex_data, "length": len(content)}), 200
+
+    except Exception as e:
+        logging.exception(f"Unhandled error during full BIN file read.")
+        return jsonify({"error": f"An unexpected error occurred during full BIN file read: {str(e)}. Please check log for details."}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=True)
+
