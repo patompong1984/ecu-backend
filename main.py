@@ -8,8 +8,9 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 CORS(app)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') # ปรับปรุง format ของ log
-app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024
+# ปรับปรุง format ของ log เพื่อให้มี timestamp และระดับความสำคัญ
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') 
+app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024 # เพิ่มขนาดไฟล์
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # ==============================================================================
@@ -22,7 +23,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 #
 # คุณจำเป็นต้องหาค่าที่ถูกต้องจากแหล่งข้อมูลที่เชื่อถือได้ เช่น Damos files,
 # ซอฟต์แวร์ Tuning เฉพาะทาง (WinOLS, TunerPro RT), หรือการทำ Reverse Engineering
-# ด้วย Hex Editor (เปรียบเทียบไฟล์)
+# ด้วย Hex Editor (เปรียบเทียบไฟล์ต้นฉบับกับไฟล์ที่ถูกแก้ไขเล็กน้อย)
 # ==============================================================================
 MAP_OFFSETS = {
     # รูปแบบ: "map_name": {"block": 0xADDRESS_OF_MAP, "x_axis": 0xADDRESS_OF_X_AXIS, "y_axis": 0xADDRESS_OF_Y_AXIS, "size": (ROWS, COLS)},
@@ -51,7 +52,11 @@ MAP_OFFSETS = {
     "green_5": {"block": 0x197475, "x_axis": 0x1973DE, "y_axis": 0x197430, "size": (25, 20)},
     "turbo": {"block": 0x19541C, "x_axis": 0x19535A, "y_axis": 0x1953D4, "size": (21, 14)},
     "turbo_meter": {"block": 0x195E62, "x_axis": 0x195DE8, "y_axis": 0x195E2C, "size": (21, 9)},
-    "dtc_off": {"block": 0x1D0018, "x_axis": 0x1D0000, "y_axis": 0x1D0008, "size": (5, 25)}
+    "dtc_off": {"block": 0x1D0018, "x_axis": 0x1D0000, "y_axis": 0x1D0008, "size": (5, 25)},
+    # หาก Map Rail_pressure มีปัญหาเรื่องค่า 0 และ 12.75 ซ้ำๆ กัน
+    # คุณต้องเพิ่ม entry สำหรับ "rail_pressure" ที่มี Offset, Size,
+    # และค่า Conversion ที่ถูกต้องสำหรับไฟล์ .bin ของคุณ
+    "rail_pressure": {"block": 0x1df000, "x_axis": 0xXXXXXX, "y_axis": 0xYYYYYY, "size": (R, C)}, # ต้องแก้ไข R, C, XXXXXX, YYYYYY
 }
 
 # ==============================================================================
@@ -89,7 +94,12 @@ MAP_CONVERSION_SETTINGS = {
     "green_5": {"data_type": "8bit", "factor": 0.235, "offset": 0, "x_scale": 1.0, "y_scale": 1.0},
     "turbo": {"data_type": "8bit", "factor": 0.392, "offset": 0, "x_scale": 1.0, "y_scale": 1.0},
     "turbo_meter": {"data_type": "8bit", "factor": 0.392, "offset": 0, "x_scale": 1.0, "y_scale": 1.0},
-    "dtc_off": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 1.0}
+    "dtc_off": {"data_type": "8bit", "factor": 1.0, "offset": 0, "x_scale": 1.0, "y_scale": 1.0},
+    # หาก Map Rail_pressure มีปัญหาเรื่องค่า 0 และ 12.75 ซ้ำๆ กัน
+    # คุณต้องเพิ่ม entry สำหรับ "rail_pressure" ที่มี Offset, Size,
+    # และค่า Conversion ที่ถูกต้องสำหรับไฟล์ .bin ของคุณ
+    # ตัวอย่าง (คุณต้องหาค่าที่ถูกต้องจาก Damos หรือการวิเคราะห์ไฟล์จริง):
+    "rail_pressure": {"data_type": "16bit", "factor": 0.0732, "offset": 0, "endian": "<H", "x_scale": 100.0, "y_scale": 1.0}, # ต้องแก้ไขค่าเหล่านี้
 }
 
 # ฟังก์ชันสำหรับแปลงค่าแกน (ใช้กับ raw bytes)
@@ -154,7 +164,8 @@ def get_map_display_name(map_type):
         "green_5": "Fuel Map Green 5",
         "turbo": "Turbo Boost Map",
         "turbo_meter": "Turbo Metering Map",
-        "dtc_off": "DTC Off Table"
+        "dtc_off": "DTC Off Table",
+        "rail_pressure": "Rail Pressure Map" # เพิ่มสำหรับ Rail Pressure
     }
     return names.get(map_type, map_type.replace('_', ' ').title())
 
@@ -183,7 +194,8 @@ def get_map_unit(map_type):
         "green_5": "mg/stroke",
         "turbo": "mbar", # หรือ % duty
         "turbo_meter": "mbar", # หรือ % duty
-        "dtc_off": ""
+        "dtc_off": "",
+        "rail_pressure": "bar" # เพิ่มสำหรับ Rail Pressure
     }
     return units.get(map_type, "")
 
@@ -200,9 +212,10 @@ def analyze_dynamic_map():
         return jsonify({"error": "No file uploaded"}), 400
 
     map_type = request.form.get("type")
+    # ตรวจสอบว่า map_type มีอยู่ใน MAP_OFFSETS หรือไม่
     if map_type not in MAP_OFFSETS:
         logging.error(f"Unsupported map type: {map_type}")
-        return jsonify({"error": f"Unsupported map type: {map_type}. Please check MAP_OFFSETS configuration."}), 400 # เพิ่มข้อความแนะนำ
+        return jsonify({"error": f"Unsupported map type: {map_type}. Please check MAP_OFFSETS configuration."}), 400
 
     map_info = MAP_OFFSETS[map_type]
     block_offset = map_info["block"]
@@ -213,7 +226,8 @@ def analyze_dynamic_map():
     # ดึง conversion settings สำหรับ map_type นั้นๆ หรือใช้ default
     conv = MAP_CONVERSION_SETTINGS.get(map_type)
     if not conv:
-        if map_type in ["pump_command", "injector_1", "injector_2", "limit_crp"]:
+        # กำหนด default conversion ตามประเภทของ Map ที่คาดการณ์ไว้
+        if map_type in ["pump_command", "injector_1", "injector_2", "limit_crp", "rail_pressure"]: # เพิ่ม rail_pressure ถ้าคาดว่าจะเป็น 16bit
              conv = MAP_CONVERSION_SETTINGS["default_16bit"]
              logging.info(f"Using default_16bit for {map_type} (no specific settings found).")
         else:
@@ -241,9 +255,13 @@ def analyze_dynamic_map():
     # คำนวณขนาดไฟล์ที่ต้องการทั้งหมด เพื่อตรวจสอบ File too small
     required_size = block_offset + total_map_bytes
     if x_axis_offset is not None:
-        required_size = max(required_size, x_axis_offset + cols * (2 if axis_x_data_type == "16bit" else 1)) 
+        # คำนวณขนาดที่ต้องการสำหรับแกน X
+        x_axis_bytes_len = cols * (2 if axis_x_data_type == "16bit" else 1)
+        required_size = max(required_size, x_axis_offset + x_axis_bytes_len) 
     if y_axis_offset is not None:
-        required_size = max(required_size, y_axis_offset + rows * (2 if axis_y_data_type == "16bit" else 1)) 
+        # คำนวณขนาดที่ต้องการสำหรับแกน Y
+        y_axis_bytes_len = rows * (2 if axis_y_data_type == "16bit" else 1)
+        required_size = max(required_size, y_axis_offset + y_axis_bytes_len) 
 
     try:
         bin_file = request.files["bin"]
@@ -254,8 +272,8 @@ def analyze_dynamic_map():
             return jsonify({"error": f"File too small for selected map. Expected at least {required_size} bytes, got {len(content)} bytes. Please check the BIN file or map offsets."}), 400
 
         # Read map block
-        # ตรวจสอบขอบเขตการอ่านก่อน
-        if block_offset + total_map_bytes > len(content):
+        # ตรวจสอบขอบเขตการอ่าน block_offset
+        if block_offset < 0 or block_offset + total_map_bytes > len(content):
             logging.error(f"Map block read out of bounds for '{map_type}'. Offset: {hex(block_offset)}, Expected end: {hex(block_offset + total_map_bytes)}, File size: {hex(len(content))}.")
             return jsonify({"error": "Map data out of file bounds. Check map block offset and size."}), 400
 
@@ -265,7 +283,7 @@ def analyze_dynamic_map():
             return jsonify({"error": "Incomplete map data in file. Check map dimensions."}), 400
 
         # ตรวจสอบ byte ซ้ำ (อาจบ่งบอก Map ว่างเปล่าหรือ Offset ผิด)
-        if all(b == raw_block[0] for b in raw_block) and raw_block: # เพิ่ม raw_block: เพื่อป้องกัน list ว่าง
+        if raw_block and all(b == raw_block[0] for b in raw_block):
             logging.warning(f"{map_type.upper()} map block contains all identical bytes: {raw_block[0]} (Offset: {hex(block_offset)}). This might indicate an incorrect offset or an empty/null map.")
 
         map_data = []
@@ -306,7 +324,7 @@ def analyze_dynamic_map():
                     processed_value = raw_value * factor + offset_val
                 
                     # Special handling for negative values (e.g., pressure, duty cycle should not be negative)
-                    if map_type in ["turbo", "turbo_meter", "limit_baro_1", "limit_baro_2", "limit_baro_3"] and processed_value < 0:
+                    if map_type in ["turbo", "turbo_meter", "limit_baro_1", "limit_baro_2", "limit_baro_3", "rail_pressure"] and processed_value < 0:
                         processed_value = 0 # Clamp to 0 if it's a pressure/duty cycle map
 
                 row.append(round(processed_value, 2) if processed_value is not None else None)
@@ -319,7 +337,7 @@ def analyze_dynamic_map():
         if x_axis_offset is not None:
             x_axis_raw_bytes_len = cols * (2 if axis_x_data_type == "16bit" else 1)
             # ตรวจสอบขอบเขตก่อนอ่านแกน X
-            if x_axis_offset + x_axis_raw_bytes_len > len(content):
+            if x_axis_offset < 0 or x_axis_offset + x_axis_raw_bytes_len > len(content):
                 logging.warning(f"X-axis read out of bounds for {map_type}. Offset: {hex(x_axis_offset)}, Expected end: {hex(x_axis_offset + x_axis_raw_bytes_len)}, File size: {hex(len(content))}. Generating generic X-axis.")
                 x_axis = [round(i * axis_x_scale, 2) for i in range(cols)]
             else:
@@ -332,7 +350,7 @@ def analyze_dynamic_map():
         if y_axis_offset is not None:
             y_axis_raw_bytes_len = rows * (2 if axis_y_data_type == "16bit" else 1)
             # ตรวจสอบขอบเขตก่อนอ่านแกน Y
-            if y_axis_offset + y_axis_raw_bytes_len > len(content):
+            if y_axis_offset < 0 or y_axis_offset + y_axis_raw_bytes_len > len(content):
                 logging.warning(f"Y-axis read out of bounds for {map_type}. Offset: {hex(y_axis_offset)}, Expected end: {hex(y_axis_offset + y_axis_raw_bytes_len)}, File size: {hex(len(content))}. Generating generic Y-axis.")
                 y_axis = [round(i * axis_y_scale, 2) for i in range(rows)]
             else:
@@ -399,7 +417,8 @@ def save_tuned_bin():
 
         conv = MAP_CONVERSION_SETTINGS.get(map_type)
         if not conv:
-            if map_type in ["pump_command", "injector_1", "injector_2", "limit_crp"]:
+            # กำหนด default conversion ตามประเภทของ Map ที่คาดการณ์ไว้
+            if map_type in ["pump_command", "injector_1", "injector_2", "limit_crp", "rail_pressure"]: # เพิ่ม rail_pressure ถ้าคาดว่าจะเป็น 16bit
                 conv = MAP_CONVERSION_SETTINGS["default_16bit"]
             else:
                 conv = MAP_CONVERSION_SETTINGS["default_8bit"]
@@ -414,8 +433,8 @@ def save_tuned_bin():
         total_map_bytes = rows * cols * byte_per_value
 
         # Check if the file is large enough to contain the map data block
-        if block_offset + total_map_bytes > len(content):
-            logging.error(f"Original file is too small to write map '{map_type}'. File size: {len(content)} bytes, Required end offset: {block_offset + total_map_bytes} bytes.")
+        if block_offset < 0 or block_offset + total_map_bytes > len(content):
+            logging.error(f"Original file is too small to write map '{map_type}'. File size: {len(content)} bytes, Required end offset: {block_offset + total_map_bytes} bytes. Check map block offset and size.")
             return jsonify({"error": "Original file too small to write map data. Check map block offset and size."}), 400
 
         # Convert modified map data back to raw bytes and overwrite
@@ -492,23 +511,24 @@ def save_tuned_bin():
         #     checksum = sum(data_bytes_segment) & 0xFFFF # Modulo 65536 for 16-bit
         #     return checksum
         #
-        # if "your_ecu_model_identifier" in map_type: # อาจจะตรวจสอบจากชื่อ map หรือข้อมูลอื่น
-        #     checksum_start_offset = 0x000000 # ตัวอย่าง: จุดเริ่มต้นของข้อมูลที่ Checksum ครอบคลุม
-        #     checksum_end_offset = 0x1FFFFF   # ตัวอย่าง: จุดสิ้นสุดของข้อมูลที่ Checksum ครอบคลุม
-        #     checksum_location_offset = 0x1FFFFC # ตัวอย่าง: ตำแหน่งที่เก็บค่า Checksum (เช่น 2 bytes)
+        # # ตัวอย่างการนำไปใช้:
+        # # if map_type == "torque_tps_1": # ตัวอย่าง: Checksum อาจจะเฉพาะ Map หรือเฉพาะ ECU
+        # #     checksum_start_offset = 0x000000 # ต้องหาเอง
+        # #     checksum_end_offset = 0x1FFFFF   # ต้องหาเอง
+        # #     checksum_location_offset = 0x1FFFFC # ต้องหาเอง (เช่น 2 bytes)
         #
-        #     if checksum_start_offset < len(content) and checksum_end_offset <= len(content) and checksum_location_offset + 2 <= len(content):
-        #         data_for_checksum = content[checksum_start_offset:checksum_end_offset]
-        #         new_checksum_value = calculate_checksum(data_for_checksum)
+        # #     if checksum_start_offset < len(content) and checksum_end_offset <= len(content) and checksum_location_offset + 2 <= len(content):
+        # #         data_for_checksum = content[checksum_start_offset:checksum_end_offset]
+        # #         new_checksum_value = calculate_checksum(data_for_checksum)
         #
-        #         # เขียน Checksum กลับลงไปในไฟล์ (สมมติว่าเป็น 16-bit Little-endian)
-        #         content[checksum_location_offset:checksum_location_offset + 2] = struct.pack("<H", new_checksum_value)
-        #         logging.info(f"Checksum updated to {hex(new_checksum_value)} at {hex(checksum_location_offset)} for {map_type}.")
-        #     else:
-        #         logging.warning(f"Checksum calculation skipped for {map_type} due to invalid offsets/bounds.")
-        # else:
-        #     logging.warning(f"No specific checksum logic found for {map_type}. File might be invalid for ECU if checksum is required.")
-        #
+        # #         # เขียน Checksum กลับลงไปในไฟล์ (สมมติว่าเป็น 16-bit Little-endian)
+        # #         content[checksum_location_offset:checksum_location_offset + 2] = struct.pack("<H", new_checksum_value)
+        # #         logging.info(f"Checksum updated to {hex(new_checksum_value)} at {hex(checksum_location_offset)} for {map_type}.")
+        # #     else:
+        # #         logging.warning(f"Checksum calculation skipped for {map_type} due to invalid offsets/bounds.")
+        # # else:
+        # #     logging.info(f"No specific checksum logic defined or applied for {map_type}. File might be invalid for ECU if checksum is required.")
+        # #
         # ======================================================================
 
         # ส่งไฟล์ที่แก้ไขแล้วกลับไป
@@ -537,4 +557,3 @@ if __name__ == '__main__':
     # สำหรับการรันบน Render/Production ไม่จำเป็นต้องใช้บรรทัดนี้ เพราะ Render จะจัดการการรันให้
     # หากรันในเครื่องเพื่อทดสอบ ให้ uncomment บรรทัดนี้
     app.run(host='0.0.0.0', port=10000, debug=True)
-
